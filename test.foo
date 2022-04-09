@@ -1,0 +1,5 @@
+let five = 5;
+let eight = 3 + five;
+fn add x y = x + y;
+fn main = add(five, eight);
+main()
