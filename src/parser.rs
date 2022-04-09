@@ -1,42 +1,66 @@
 use chumsky::prelude::*;
 
-use super::syntax::*;
+use super::lexer::Token;
 
-pub fn parser() -> impl Parser<char, Expr, Error = Simple<char>> {
-    let ident = text::ident().padded();
+#[derive(Debug)]
+pub enum Expr {
+    Num(f64),
+    Var(String),
+
+    Neg(Box<Expr>),
+    Add(Box<Expr>, Box<Expr>),
+    Sub(Box<Expr>, Box<Expr>),
+    Mul(Box<Expr>, Box<Expr>),
+    Div(Box<Expr>, Box<Expr>),
+
+    Call(String, Vec<Expr>),
+    Let {
+        name: String,
+        rhs: Box<Expr>,
+        then: Box<Expr>,
+    },
+    Fn {
+        name: String,
+        args: Vec<String>,
+        body: Box<Expr>,
+        then: Box<Expr>,
+    },
+}
+
+pub fn parser() -> impl Parser<Token, Expr, Error = Simple<Token>> {
+    let ident = select! { Token::Ident(ident) => ident.clone() }.labelled("identifier");
 
     let expr = recursive(|expr| {
-        let int = text::int(10)
-            .map(|s: String| Expr::Num(s.parse().unwrap()))
-            .padded();
+        let num = select! {
+            Token::Num(n) => Expr::Num(n.parse().unwrap()),
+        };
 
         let call = ident
             .then(
                 expr.clone()
-                    .separated_by(just(','))
+                    .separated_by(just(Token::Comma))
                     .allow_trailing() // Foo is Rust-like, so allow trailing commas to appear in arg lists
-                    .delimited_by(just('('), just(')')),
+                    .delimited_by(just(Token::OpenParen), just(Token::CloseParen)),
             )
             .map(|(f, args)| Expr::Call(f, args));
 
-        let atom = int
-            .or(expr.delimited_by(just('('), just(')')))
+        let atom = num
+            .or(expr.delimited_by(just(Token::OpenParen), just(Token::CloseParen)))
             .or(call)
             .or(ident.map(Expr::Var));
 
-        let op = |c| just(c).padded();
+        let op = just(Token::Minus).to(Expr::Neg);
 
-        let unary = op('-')
-            .repeated()
+        let unary = op.repeated()
             .then(atom)
             .foldr(|_op, rhs| Expr::Neg(Box::new(rhs)));
 
         let product = unary
             .clone()
             .then(
-                op('*')
+                just(Token::Times)
                     .to(Expr::Mul as fn(_, _) -> _)
-                    .or(op('/').to(Expr::Div as fn(_, _) -> _))
+                    .or(just(Token::Div).to(Expr::Div as fn(_, _) -> _))
                     .then(unary)
                     .repeated(),
             )
@@ -45,23 +69,23 @@ pub fn parser() -> impl Parser<char, Expr, Error = Simple<char>> {
         let sum = product
             .clone()
             .then(
-                op('+')
+                just(Token::Plus)
                     .to(Expr::Add as fn(_, _) -> _)
-                    .or(op('-').to(Expr::Sub as fn(_, _) -> _))
+                    .or(just(Token::Minus).to(Expr::Sub as fn(_, _) -> _))
                     .then(product)
                     .repeated(),
             )
             .foldl(|lhs, (op, rhs)| op(Box::new(lhs), Box::new(rhs)));
 
-        sum.padded()
+        sum
     });
 
     let decl = recursive(|decl| {
-        let r#let = text::keyword("let")
+        let r#let = just(Token::Let)
             .ignore_then(ident)
-            .then_ignore(just('='))
+            .then_ignore(just(Token::Eq))
             .then(expr.clone())
-            .then_ignore(just(';'))
+            .then_ignore(just(Token::Semi))
             .then(decl.clone())
             .map(|((name, rhs), then)| Expr::Let {
                 name,
@@ -70,12 +94,12 @@ pub fn parser() -> impl Parser<char, Expr, Error = Simple<char>> {
             });
 
         // e.g. fn add a b = a + b;
-        let r#fn = text::keyword("fn")
+        let r#fn = just(Token::Fn)
             .ignore_then(ident) // function name
             .then(ident.repeated()) // function args
-            .then_ignore(just('='))
+            .then_ignore(just(Token::Eq))
             .then(expr.clone())
-            .then_ignore(just(';'))
+            .then_ignore(just(Token::Semi))
             .then(decl)
             .map(|(((name, args), body), then)| Expr::Fn {
                 name,
@@ -84,7 +108,9 @@ pub fn parser() -> impl Parser<char, Expr, Error = Simple<char>> {
                 then: Box::new(then),
             });
 
-        r#let.or(r#fn).or(expr).padded()
+        r#let
+            .or(r#fn)
+            .or(expr)
     });
 
     decl.then_ignore(end())

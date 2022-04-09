@@ -1,4 +1,4 @@
-use super::syntax::*;
+use super::parser::Expr;
 
 pub fn eval<'a>(
     expr: &'a Expr,
