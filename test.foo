@@ -1,5 +1,5 @@
 let five = 5;
 let eight = 3 + five;
-fn add x y = x + y;
+fn add a b = a + b;
 fn main = add(five, eight);
 main()
